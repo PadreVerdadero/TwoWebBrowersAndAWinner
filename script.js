@@ -1,4 +1,4 @@
-// Firebase v9 (modular) imports
+// Firebase v9 modular imports
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import {
   getDatabase,
@@ -7,10 +7,14 @@ import {
   push,
   onValue,
   update,
-  remove
+  remove,
+  get,
+  child
 } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
 
-// Firebase config (with databaseURL added)
+/* ---------------------------
+   Firebase config (include databaseURL)
+   --------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyB7fXtog_41paX_ucqFadY4_qaDkBOFdP8",
   authDomain: "twowebbrowsers.firebaseapp.com",
@@ -21,16 +25,16 @@ const firebaseConfig = {
   databaseURL: "https://twowebbrowsers-default-rtdb.firebaseio.com"
 };
 
-// Init
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// State
+/* ---------------------------
+   State & DOM refs
+   --------------------------- */
 let playerName = null;
 let currentRoom = "roomA";
-let chatUnsub = null;
+let privateRevealsForMe = {}; // cache of reveals given to me: { sourceName: {role, revealedAt} }
 
-// DOM
 const joinBtn = document.getElementById("joinBtn");
 const playerNameInput = document.getElementById("playerNameInput");
 const messagesEl = document.getElementById("messages");
@@ -44,127 +48,244 @@ const leaderBEl = document.getElementById("leaderB");
 const timerEl = document.getElementById("timer");
 const phaseEl = document.getElementById("phase");
 
-// Join
+/* ---------------------------
+   Join game
+   --------------------------- */
 joinBtn.onclick = async () => {
   playerName = (playerNameInput.value || "").trim() || "Player" + Math.floor(Math.random() * 1000);
 
-  // Create player in current room
+  // Add player to current room (public node keeps role "Unknown" unless you choose to reveal publicly later; by user request we do not do public reveals)
   await set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
     role: "Unknown",
     revealed: false
   });
 
-  // Hide name select
   document.getElementById("nameSelect").style.display = "none";
 
-  // Attach listeners
+  // Render both rooms and leader labels
   renderRoom("roomA", "playersA");
   renderRoom("roomB", "playersB");
   renderLeaderLabels();
-  attachChatListener(currentRoom);
+
+  // Attach inbox listener for me (my personal inbox)
+  attachInboxListener(playerName);
+
+  // Attach private reveals listener for me
+  attachPrivateRevealsListener(playerName);
 };
 
-// Chat
-sendBtn.onclick = () => sendMessage();
-chatInput.addEventListener("keypress", e => {
-  if (e.key === "Enter") sendMessage();
-});
+/* ---------------------------
+   Room chat: send message to each player in the room's inbox
+   --------------------------- */
+sendBtn.onclick = sendRoomMessage;
+chatInput.addEventListener("keypress", e => { if (e.key === "Enter") sendRoomMessage(); });
 
-function sendMessage() {
+async function sendRoomMessage() {
   const text = chatInput.value.trim();
   if (!text || !playerName) return;
-  const msgRef = push(ref(db, `rooms/${currentRoom}/chat`));
-  set(msgRef, { sender: playerName, text });
+  // Get list of players currently in the room
+  const playersSnap = await get(child(ref(db), `rooms/${currentRoom}/players`));
+  const players = playersSnap.exists() ? playersSnap.val() : {};
+  const ts = Date.now();
+
+  // For each player in the room, push a message into their inbox
+  const promises = Object.keys(players).map(target => {
+    const msgRef = push(ref(db, `inboxes/${target}/messages`));
+    return set(msgRef, {
+      from: playerName,
+      text,
+      ts,
+      roomMessage: true,
+      room: currentRoom
+    });
+  });
+
+  await Promise.all(promises);
   chatInput.value = "";
 }
 
-function attachChatListener(roomId) {
-  // Detach previous chat listener if any (simple replace by re-attaching)
-  onValue(ref(db, `rooms/${roomId}/chat`), snapshot => {
-    const messages = snapshot.val() || {};
-    messagesEl.innerHTML = "";
-    Object.keys(messages).forEach(k => {
-      const { sender, text } = messages[k];
-      const p = document.createElement("p");
-      p.innerHTML = `<strong>${sender}:</strong> ${text}`;
-      messagesEl.appendChild(p);
-    });
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+/* ---------------------------
+   Private message helper (to a single target)
+   --------------------------- */
+async function sendPrivateMessage(target, text) {
+  if (!playerName || !target || !text) return;
+  const msgRef = push(ref(db, `inboxes/${target}/messages`));
+  await set(msgRef, {
+    from: playerName,
+    text,
+    ts: Date.now(),
+    roomMessage: false
   });
 }
 
-// Reveal color (Red/Blue): sets background and a circle emoji; latest instruction: emoji only for team members
+/* ---------------------------
+   Private reveal helper (reveal to a single target)
+   stored at privateReveals/{target}/{source}
+   --------------------------- */
+async function revealToTarget(target, revealPayload) {
+  if (!playerName || !target) return;
+  await set(ref(db, `privateReveals/${target}/${playerName}`), {
+    ...revealPayload,
+    revealedAt: Date.now()
+  });
+}
+
+/* ---------------------------
+   Reveal buttons: always choose a target player in the current room
+   (no public reveals)
+   --------------------------- */
 revealColorBtn.onclick = async () => {
   if (!playerName) return;
+  const target = await chooseTargetInRoom(currentRoom);
+  if (!target) return;
   const color = Math.random() > 0.5 ? "Red" : "Blue";
-  await update(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
-    role: color,
-    revealed: true
-  });
+  await revealToTarget(target, { role: color });
+  alert(`You revealed your color (${color}) to ${target}.`);
 };
 
-// Reveal role (President/Bomber): no emoji (per latest instruction)
 revealRoleBtn.onclick = async () => {
   if (!playerName) return;
+  const target = await chooseTargetInRoom(currentRoom);
+  if (!target) return;
   const role = Math.random() > 0.5 ? "President" : "Bomber";
-  await update(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
-    role: role,
-    revealed: true
-  });
+  await revealToTarget(target, { role });
+  alert(`You revealed your role (${role}) to ${target}.`);
 };
 
-// Render rooms and handle click-to-leader toggle
+/* ---------------------------
+   Helper: prompt to choose a target from players currently in a room
+   returns the chosen player name or null
+   --------------------------- */
+async function chooseTargetInRoom(roomId) {
+  const playersSnap = await get(ref(db, `rooms/${roomId}/players`));
+  if (!playersSnap.exists()) {
+    alert("No players in the room to choose.");
+    return null;
+  }
+  const players = Object.keys(playersSnap.val()).filter(n => n !== playerName);
+  if (players.length === 0) {
+    const selfChoice = confirm("No other players in the room. Reveal to yourself?");
+    return selfChoice ? playerName : null;
+  }
+  const list = players.join(", ");
+  const choice = prompt(`Choose a player to reveal to (type exact name):\n${list}`);
+  if (!choice) return null;
+  if (!players.includes(choice)) {
+    alert("Invalid player name.");
+    return null;
+  }
+  return choice;
+}
+
+/* ---------------------------
+   Render room players
+   - shows only private reveals that the current viewer has been given
+   - clicking a player opens a small action menu (toggle leader / private message / private reveal / mark hostage)
+   --------------------------- */
 function renderRoom(roomId, containerId) {
   const playersRef = ref(db, `rooms/${roomId}/players`);
   const leaderRef = ref(db, `rooms/${roomId}/leader`);
-
-  onValue(playersRef, snapshot => {
+  onValue(playersRef, async snapshot => {
     const players = snapshot.val() || {};
     const container = document.getElementById(containerId);
     container.innerHTML = "";
 
-    Object.keys(players).forEach(name => {
-      const info = players[name];
+    // Pre-fetch leader once for styling
+    const leaderSnap = await get(leaderRef);
+    const leaderName = leaderSnap.exists() ? leaderSnap.val() : null;
 
+    for (const name of Object.keys(players)) {
+      const info = players[name];
       const div = document.createElement("div");
       div.className = "player";
 
-      // Background color for team reveals
-      if (info.revealed && info.role === "Red") div.classList.add("red");
-      if (info.revealed && info.role === "Blue") div.classList.add("blue");
+      // Apply leader style if applicable
+      if (leaderName === name) div.classList.add("leader");
 
-      // Emoji only for team members (Red/Blue). No emoji for President/Bomber per latest instruction.
-      const emoji = info.revealed && (info.role === "Red" || info.role === "Blue")
-        ? (info.role === "Red" ? "🔴" : "🔵")
-        : "";
+      // Determine display text and emoji based only on private reveals for me
+      let displayText = name;
+      let emoji = "";
 
-      div.textContent = `${name} ${emoji}`;
-      div.title = "Click to toggle leader for this room";
+      const privateReveal = privateRevealsForMe[name];
+      if (privateReveal && privateReveal.role) {
+        const r = privateReveal.role;
+        if (r === "Red") { div.classList.add("red"); emoji = "🔴"; }
+        else if (r === "Blue") { div.classList.add("blue"); emoji = "🔵"; }
+        else if (r === "President") emoji = "👑";
+        else if (r === "Bomber") emoji = "💣";
+        displayText = `${name} ${emoji}`;
+      } else {
+        // No private reveal for me; show only the name (no public reveals)
+        displayText = name;
+      }
 
-      // Clicking toggles leader: if this is the leader, unpromote; otherwise promote
-      div.onclick = async () => {
-        const snap = await new Promise(res => onValue(leaderRef, res, { onlyOnce: true }));
-        const currentLeader = snap.val();
-        if (currentLeader === name) {
-          await set(leaderRef, null);
-        } else {
-          await set(leaderRef, name);
+      div.textContent = displayText;
+
+      // Click handler: open a small action prompt
+      div.onclick = async (e) => {
+        e.stopPropagation();
+        const action = prompt(
+`Actions for ${name} (enter number):
+1) Toggle leader
+2) Private message
+3) Reveal color to this player (private)
+4) Reveal role to this player (private)
+5) Mark/unmark hostage target (leader only)
+(Leave blank to cancel)`
+        );
+        if (!action) return;
+
+        if (action === "1") {
+          // toggle leader
+          const leaderSnap2 = await get(leaderRef);
+          const currentLeader = leaderSnap2.exists() ? leaderSnap2.val() : null;
+          if (currentLeader === name) await set(leaderRef, null);
+          else await set(leaderRef, name);
+          return;
+        }
+
+        if (action === "2") {
+          const text = prompt(`Private message to ${name}:`);
+          if (text) await sendPrivateMessage(name, text);
+          return;
+        }
+
+        if (action === "3") {
+          const color = Math.random() > 0.5 ? "Red" : "Blue";
+          await revealToTarget(name, { role: color });
+          alert(`You revealed your color (${color}) to ${name}.`);
+          return;
+        }
+
+        if (action === "4") {
+          const role = Math.random() > 0.5 ? "President" : "Bomber";
+          await revealToTarget(name, { role });
+          alert(`You revealed your role (${role}) to ${name}.`);
+          return;
+        }
+
+        if (action === "5") {
+          const currentTargetSnap = await get(ref(db, `rooms/${roomId}/hostageTarget`));
+          const currentTarget = currentTargetSnap.exists() ? currentTargetSnap.val() : null;
+          if (currentTarget === name) {
+            await set(ref(db, `rooms/${roomId}/hostageTarget`), null);
+            alert(`${name} unmarked as hostage target.`);
+          } else {
+            await set(ref(db, `rooms/${roomId}/hostageTarget`), name);
+            alert(`${name} marked as hostage target.`);
+          }
+          return;
         }
       };
 
-      // Reflect leader style
-      onValue(leaderRef, snap => {
-        const leaderName = snap.val();
-        if (leaderName === name) div.classList.add("leader");
-        else div.classList.remove("leader");
-      });
-
       container.appendChild(div);
-    });
+    }
   });
 }
 
-// Show leader labels at the top of rooms
+/* ---------------------------
+   Leader labels
+   --------------------------- */
 function renderLeaderLabels() {
   onValue(ref(db, "rooms/roomA/leader"), snap => {
     const leader = snap.val();
@@ -176,38 +297,104 @@ function renderLeaderLabels() {
   });
 }
 
-// Hostage exchange: only leader can exchange; only during exchange window; demo moves self to other room.
-// Later you can add UI to select another player to move.
+/* ---------------------------
+   Inbox listener (my personal inbox)
+   - shows both room messages (labeled) and private messages
+   - room messages are delivered to inboxes of players present at send time
+   --------------------------- */
+function attachInboxListener(viewerName) {
+  if (!viewerName) return;
+  const inboxRef = ref(db, `inboxes/${viewerName}/messages`);
+  onValue(inboxRef, snapshot => {
+    const msgs = snapshot.val() || {};
+    const arr = Object.keys(msgs).map(k => ({ id: k, ...msgs[k] }));
+    arr.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+    messagesEl.innerHTML = "";
+    for (const m of arr) {
+      const p = document.createElement("p");
+      if (m.roomMessage) {
+        p.innerHTML = `<strong>[Room ${m.room}] ${m.from}:</strong> ${m.text}`;
+      } else {
+        p.innerHTML = `<em>Private from ${m.from}:</em> ${m.text}`;
+      }
+      messagesEl.appendChild(p);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  });
+}
+
+/* ---------------------------
+   Private reveals listener for me
+   - caches reveals given to me so renderRoom can show them
+   --------------------------- */
+function attachPrivateRevealsListener(viewerName) {
+  if (!viewerName) return;
+  onValue(ref(db, `privateReveals/${viewerName}`), snap => {
+    privateRevealsForMe = snap.val() || {};
+    // Re-render both rooms so reveals are visible immediately
+    renderRoom("roomA", "playersA");
+    renderRoom("roomB", "playersB");
+  });
+}
+
+/* ---------------------------
+   Hostage exchange
+   - Only leader of the room can perform exchange
+   - Exchange window enforced by timer (last 20s)
+   - Leader moves the marked hostage target (rooms/{roomId}/hostageTarget) to the other room
+   - If no hostageTarget set, leader can choose a target or move themselves
+   --------------------------- */
 exchangeBtn.onclick = async () => {
   if (!playerName) return;
-
   if (!inExchangeWindow) {
-    alert("Hostage exchange is only allowed during the exchange window (last 20 seconds).");
+    alert("Hostage exchange only allowed during the exchange window (last 20 seconds).");
     return;
   }
 
   // Check leader for current room
-  const snap = await new Promise(res => onValue(ref(db, `rooms/${currentRoom}/leader`), res, { onlyOnce: true }));
-  const leader = snap.val();
+  const leaderSnap = await get(ref(db, `rooms/${currentRoom}/leader`));
+  const leader = leaderSnap.exists() ? leaderSnap.val() : null;
   if (leader !== playerName) {
     alert("Only the leader can perform the hostage exchange.");
     return;
   }
 
-  // Move current player to the other room
+  // Get hostage target
+  const targetSnap = await get(ref(db, `rooms/${currentRoom}/hostageTarget`));
+  let target = targetSnap.exists() ? targetSnap.val() : null;
+  if (!target) {
+    // If none set, ask leader to choose
+    const playersSnap = await get(ref(db, `rooms/${currentRoom}/players`));
+    const players = playersSnap.exists() ? Object.keys(playersSnap.val()) : [];
+    const choice = prompt(`No hostage target set. Enter player name to move (or leave blank to move yourself):\n${players.join(", ")}`);
+    if (choice && players.includes(choice)) target = choice;
+    else target = playerName;
+  }
+
+  // Move target to other room
   const newRoom = currentRoom === "roomA" ? "roomB" : "roomA";
-  const playerSnap = await new Promise(res => onValue(ref(db, `rooms/${currentRoom}/players/${playerName}`), res, { onlyOnce: true }));
-  const info = playerSnap.val() || { role: "Unknown", revealed: false };
+  const playerInfoSnap = await get(ref(db, `rooms/${currentRoom}/players/${target}`));
+  const info = playerInfoSnap.exists() ? playerInfoSnap.val() : { role: "Unknown", revealed: false };
 
-  await set(ref(db, `rooms/${newRoom}/players/${playerName}`), info);
-  await remove(ref(db, `rooms/${currentRoom}/players/${playerName}`));
-  await set(ref(db, `rooms/${currentRoom}/leader`), null); // old room loses leader
+  await set(ref(db, `rooms/${newRoom}/players/${target}`), info);
+  await remove(ref(db, `rooms/${currentRoom}/players/${target}`));
 
-  currentRoom = newRoom;
-  attachChatListener(currentRoom);
+  // Clear hostage target and leader in old room
+  await set(ref(db, `rooms/${currentRoom}/hostageTarget`), null);
+  await set(ref(db, `rooms/${currentRoom}/leader`), null);
+
+  // If I moved, update my currentRoom
+  if (target === playerName) {
+    currentRoom = newRoom;
+  }
+
+  alert(`${target} moved to ${newRoom}.`);
 };
 
-// Round timer and phases
+/* ---------------------------
+   Round timer & exchange window
+   --------------------------- */
 let timeLeft = 180;
 let inExchangeWindow = false;
 
