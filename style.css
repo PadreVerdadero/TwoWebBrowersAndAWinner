@@ -1,7 +1,8 @@
 body {
   font-family: Arial, sans-serif;
   text-align: center;
-  background: #f9f9f9;
+  background: #121212;
+  color: #f1f1f1;
 }
 
 .rooms {
@@ -12,17 +13,19 @@ body {
 
 .room {
   width: 40%;
-  border: 2px solid #ccc;
+  border: 2px solid #444;
   border-radius: 8px;
   padding: 10px;
-  background: #fff;
+  background: #1e1e1e;
 }
 
 .player {
   padding: 5px;
   margin: 5px;
-  border: 1px solid #999;
+  border: 1px solid #666;
   border-radius: 5px;
+  background: #2a2a2a;
+  color: #f1f1f1;
 }
 
 .leader {
@@ -32,15 +35,15 @@ body {
 
 .chat {
   margin-top: 20px;
-  border-top: 2px solid #ccc;
+  border-top: 2px solid #444;
   padding-top: 10px;
 }
 
 #messages {
   height: 150px;
   overflow-y: auto;
-  border: 1px solid #ddd;
+  border: 1px solid #444;
   margin-bottom: 10px;
   padding: 5px;
-  background: #fff;
+  background: #1e1e1e;
 }
