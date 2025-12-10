@@ -1,19 +1,25 @@
-// Firebase v9 modular imports
+/**
+ * Full client script
+ * - Firebase Auth (Google + Anonymous)
+ * - Realtime Database usage with databaseURL
+ * - Callable Cloud Functions: seedRoles, tallyVotes, requestExchange (assumed deployed)
+ * - Per-player inboxes, private reveals, votes, leader selection, hostage marking, DB-authoritative round state
+ *
+ * NOTE: Update firebaseConfig.databaseURL to match your project if different.
+ */
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import {
-  getDatabase,
-  ref,
-  set,
-  push,
-  onValue,
-  update,
-  remove,
-  get,
-  child
+  getDatabase, ref, set, push, onValue, update, remove, get, child
 } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+import {
+  getAuth, signInAnonymously, signInWithPopup, GoogleAuthProvider,
+  onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-functions.js";
 
 /* ---------------------------
-   Firebase config (include databaseURL)
+   Firebase config
    --------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyB7fXtog_41paX_ucqFadY4_qaDkBOFdP8",
@@ -27,32 +33,46 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+const auth = getAuth(app);
+const functions = getFunctions(app);
 
 /* ---------------------------
-   State & DOM refs
+   DOM refs
    --------------------------- */
-let playerName = null;
-let currentRoom = "roomA";
-let privateRevealsForMe = {}; // cache of reveals given to me: { sourceName: {role, revealedAt} }
-let roundTimerInterval = null; // if this client is the authoritative timer writer
+const signInGoogleBtn = document.getElementById("signInGoogleBtn");
+const signInAnonBtn = document.getElementById("signInAnonBtn");
+const userInfo = document.getElementById("userInfo");
+const userLabel = document.getElementById("userLabel");
+const signOutBtn = document.getElementById("signOutBtn");
 
 const joinBtn = document.getElementById("joinBtn");
-const renameBtn = document.getElementById("renameBtn");
+const leaveBtn = document.getElementById("leaveBtn");
 const playerNameInput = document.getElementById("playerNameInput");
+
+const playersA = document.getElementById("playersA");
+const playersB = document.getElementById("playersB");
+const leaderA = document.getElementById("leaderA");
+const leaderB = document.getElementById("leaderB");
+const hostageA = document.getElementById("hostageA");
+const hostageB = document.getElementById("hostageB");
+
 const messagesEl = document.getElementById("messages");
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
+
+const seedRolesBtn = document.getElementById("seedRolesBtn");
+const tallyVotesBtn = document.getElementById("tallyVotesBtn");
 const startRoundBtn = document.getElementById("startRoundBtn");
 const stopRoundBtn = document.getElementById("stopRoundBtn");
 const exchangeBtn = document.getElementById("exchangeBtn");
-const leaderAEl = document.getElementById("leaderA");
-const leaderBEl = document.getElementById("leaderB");
+
 const timerEl = document.getElementById("timer");
 const phaseEl = document.getElementById("phase");
+const roundHostEl = document.getElementById("roundHost");
 
 const actionMenu = document.getElementById("actionMenu");
 const actionMenuTitle = document.getElementById("actionMenuTitle");
-const menuToggleLeader = document.getElementById("menuToggleLeader");
+const menuVote = document.getElementById("menuVote");
 const menuPrivateMsg = document.getElementById("menuPrivateMsg");
 const menuRevealColor = document.getElementById("menuRevealColor");
 const menuRevealRole = document.getElementById("menuRevealRole");
@@ -66,208 +86,204 @@ const modalCancel = document.getElementById("modalCancel");
 const modalConfirm = document.getElementById("modalConfirm");
 
 /* ---------------------------
-   Join / rename
+   Local state
+   --------------------------- */
+let currentUser = null;         // firebase user object
+let uid = null;                 // auth uid
+let displayName = null;         // chosen display name
+let currentRoom = "roomA";      // client-side room (leader and moves use DB)
+let privateRevealsForMe = {};   // cached reveals given to me
+let actionTarget = null;        // { name, uid, roomId } for action menu
+let roundLocalInterval = null;  // if this client is authoritative writer (optional)
+let isJoined = false;
+
+/* ---------------------------
+   Auth handlers
+   --------------------------- */
+signInGoogleBtn.onclick = async () => {
+  const provider = new GoogleAuthProvider();
+  try { await signInWithPopup(auth, provider); } catch (e) { alert(e.message); }
+};
+signInAnonBtn.onclick = async () => {
+  try { await signInAnonymously(auth); } catch (e) { alert(e.message); }
+};
+signOutBtn.onclick = async () => { await signOut(auth); location.reload(); };
+
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  if (user) {
+    uid = user.uid;
+    userInfo.style.display = "inline-block";
+    userLabel.textContent = user.displayName ? `${user.displayName} (${uid.slice(0,6)})` : `You (${uid.slice(0,6)})`;
+    signInGoogleBtn.style.display = "none";
+    signInAnonBtn.style.display = "none";
+  } else {
+    uid = null;
+    userInfo.style.display = "none";
+    signInGoogleBtn.style.display = "inline-block";
+    signInAnonBtn.style.display = "inline-block";
+  }
+});
+
+/* ---------------------------
+   Join / Leave
    --------------------------- */
 joinBtn.onclick = async () => {
-  const name = (playerNameInput.value || "").trim() || "Player" + Math.floor(Math.random() * 1000);
-  playerName = name;
-  await set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
-    role: "Unknown",
-    revealed: false
-  });
-  // store a small meta node so we can enforce client-only name changes later if desired
-  await set(ref(db, `playersMeta/${playerName}`), { joinedAt: Date.now() });
+  if (!uid) { alert("Sign in first"); return; }
+  displayName = (playerNameInput.value || "").trim() || `Player-${uid.slice(0,6)}`;
+  // write playersMeta and room player node (ownership enforced by DB rules)
+  await set(ref(db, `playersMeta/${uid}`), { displayName, joinedAt: Date.now() });
+  await set(ref(db, `matches/default/rooms/${currentRoom}/players/${uid}`), { displayName, rolePublic: "Unknown", revealedPublic: false });
+  isJoined = true;
+  joinBtn.style.display = "none";
+  leaveBtn.style.display = "inline-block";
+  playerNameInput.disabled = true;
 
-  document.getElementById("nameSelect").style.display = "none";
-  renameBtn.style.display = "inline-block";
-
-  // Render UI and listeners
-  renderRoom("roomA", "playersA");
-  renderRoom("roomB", "playersB");
+  // attach listeners
+  renderRoom("roomA", playersA, "roomA");
+  renderRoom("roomB", playersB, "roomB");
   renderLeaderLabels();
-  attachInboxListener(playerName);
-  attachPrivateRevealsListener(playerName);
-  attachRoundListener(); // listen to DB authoritative round state
+  attachInboxListener(uid);
+  attachPrivateRevealsListener(uid);
+  attachRoundListener();
 };
 
-renameBtn.onclick = async () => {
-  const newName = prompt("Enter new name:");
-  if (!newName) return;
-  // Remove old node and create new node under current room
-  await remove(ref(db, `rooms/${currentRoom}/players/${playerName}`));
-  await remove(ref(db, `playersMeta/${playerName}`));
-  playerName = newName.trim();
-  await set(ref(db, `rooms/${currentRoom}/players/${playerName}`), { role: "Unknown", revealed: false });
-  await set(ref(db, `playersMeta/${playerName}`), { joinedAt: Date.now() });
-  attachInboxListener(playerName);
-  attachPrivateRevealsListener(playerName);
+leaveBtn.onclick = async () => {
+  if (!isJoined) return;
+  await remove(ref(db, `matches/default/rooms/${currentRoom}/players/${uid}`));
+  await remove(ref(db, `playersMeta/${uid}`));
+  isJoined = false;
+  joinBtn.style.display = "inline-block";
+  leaveBtn.style.display = "none";
+  playerNameInput.disabled = false;
+  messagesEl.innerHTML = "";
 };
 
 /* ---------------------------
-   Room chat: send message to each player in the room's inbox
+   Room rendering and actions
+   - players stored at matches/default/rooms/{roomId}/players/{uid}
+   - leader stored at matches/default/rooms/{roomId}/leaderUid
+   - hostage target stored at matches/default/rooms/{roomId}/hostageTargetUid
    --------------------------- */
-sendBtn.onclick = sendRoomMessage;
-chatInput.addEventListener("keypress", e => { if (e.key === "Enter") sendRoomMessage(); });
+function renderRoom(roomId, containerEl, roomKey) {
+  const playersRef = ref(db, `matches/default/rooms/${roomId}/players`);
+  const leaderRef = ref(db, `matches/default/rooms/${roomId}/leaderUid`);
+  const hostageRef = ref(db, `matches/default/rooms/${roomId}/hostageTargetUid`);
 
-async function sendRoomMessage() {
-  const text = chatInput.value.trim();
-  if (!text || !playerName) return;
-  const playersSnap = await get(child(ref(db), `rooms/${currentRoom}/players`));
-  const players = playersSnap.exists() ? playersSnap.val() : {};
-  const ts = Date.now();
-
-  const promises = Object.keys(players).map(target => {
-    const msgRef = push(ref(db, `inboxes/${target}/messages`));
-    return set(msgRef, {
-      from: playerName,
-      text,
-      ts,
-      roomMessage: true,
-      room: currentRoom
-    });
-  });
-
-  await Promise.all(promises);
-  chatInput.value = "";
-}
-
-/* ---------------------------
-   Private message helper (to a single target)
-   --------------------------- */
-async function sendPrivateMessage(target, text) {
-  if (!playerName || !target || !text) return;
-  const msgRef = push(ref(db, `inboxes/${target}/messages`));
-  await set(msgRef, {
-    from: playerName,
-    text,
-    ts: Date.now(),
-    roomMessage: false
-  });
-}
-
-/* ---------------------------
-   Private reveal helper (reveal to a single target)
-   stored at privateReveals/{target}/{source}
-   --------------------------- */
-async function revealToTarget(target, revealPayload) {
-  if (!playerName || !target) return;
-  await set(ref(db, `privateReveals/${target}/${playerName}`), {
-    ...revealPayload,
-    revealedAt: Date.now()
-  });
-}
-
-/* ---------------------------
-   Render room players (contextual menu)
-   --------------------------- */
-function renderRoom(roomId, containerId) {
-  const playersRef = ref(db, `rooms/${roomId}/players`);
-  const leaderRef = ref(db, `rooms/${roomId}/leader`);
-  onValue(playersRef, async snapshot => {
-    const players = snapshot.val() || {};
-    const container = document.getElementById(containerId);
-    container.innerHTML = "";
-
+  onValue(playersRef, async snap => {
+    const players = snap.val() || {};
+    containerEl.innerHTML = "";
+    // fetch leader and hostage once for styling
     const leaderSnap = await get(leaderRef);
-    const leaderName = leaderSnap.exists() ? leaderSnap.val() : null;
+    const leaderUid = leaderSnap.exists() ? leaderSnap.val() : null;
+    const hostageSnap = await get(hostageRef);
+    const hostageUid = hostageSnap.exists() ? hostageSnap.val() : null;
 
-    for (const name of Object.keys(players)) {
-      const info = players[name];
+    // update labels
+    if (roomId === "roomA") { leaderA.textContent = `Leader: ${leaderUid ? leaderUid.slice(0,6) : "(none)"}`; hostageA.textContent = `Hostage: ${hostageUid ? hostageUid.slice(0,6) : "(none)"}`; }
+    else { leaderB.textContent = `Leader: ${leaderUid ? leaderUid.slice(0,6) : "(none)"}`; hostageB.textContent = `Hostage: ${hostageUid ? hostageUid.slice(0,6) : "(none)"}`; }
+
+    for (const pUid of Object.keys(players)) {
+      const info = players[pUid];
       const div = document.createElement("div");
       div.className = "player";
-
-      if (leaderName === name) div.classList.add("leader");
-
-      // Display only private reveals for me
-      let displayText = name;
-      let emoji = "";
-      const privateReveal = privateRevealsForMe[name];
-      if (privateReveal && privateReveal.role) {
-        const r = privateReveal.role;
-        if (r === "Red") { div.classList.add("red"); emoji = "🔴"; }
-        else if (r === "Blue") { div.classList.add("blue"); emoji = "🔵"; }
-        else if (r === "President") emoji = "👑";
-        else if (r === "Bomber") emoji = "💣";
-        displayText = `${name} ${emoji}`;
-      } else {
-        displayText = name;
+      // show private reveal if I have one for this player
+      const reveal = privateRevealsForMe[pUid];
+      let label = info.displayName || pUid.slice(0,6);
+      if (reveal && reveal.role) {
+        const r = reveal.role;
+        if (r === "Red") { div.classList.add("red"); label += " 🔴"; }
+        else if (r === "Blue") { div.classList.add("blue"); label += " 🔵"; }
+        else if (r === "President") label += " 👑";
+        else if (r === "Bomber") label += " 💣";
       }
-
-      div.textContent = displayText;
-
-      // Click handler: show contextual action menu
+      if (leaderUid === pUid) div.classList.add("leader");
+      div.textContent = label;
       div.onclick = (e) => {
         e.stopPropagation();
-        showActionMenuFor(name, e.clientX, e.clientY, roomId);
+        showActionMenu(pUid, info.displayName || pUid.slice(0,6), e.clientX, e.clientY, roomId);
       };
-
-      container.appendChild(div);
+      containerEl.appendChild(div);
     }
   });
 }
 
 /* ---------------------------
-   Contextual action menu logic
+   Leader labels (kept in renderRoom but also listen globally)
    --------------------------- */
-let actionTarget = null;
-function showActionMenuFor(targetName, x, y, roomId) {
-  actionTarget = { name: targetName, roomId };
+function renderLeaderLabels() {
+  onValue(ref(db, `matches/default/rooms/roomA/leaderUid`), snap => {
+    const v = snap.val(); leaderA.textContent = `Leader: ${v || "(none)"}`;
+  });
+  onValue(ref(db, `matches/default/rooms/roomB/leaderUid`), snap => {
+    const v = snap.val(); leaderB.textContent = `Leader: ${v || "(none)"}`;
+  });
+}
+
+/* ---------------------------
+   Action menu (contextual)
+   --------------------------- */
+function showActionMenu(targetUid, targetName, x, y, roomId) {
+  actionTarget = { uid: targetUid, name: targetName, roomId };
   actionMenuTitle.textContent = `Actions for ${targetName}`;
   actionMenu.style.left = `${x}px`;
   actionMenu.style.top = `${y}px`;
   actionMenu.style.display = "block";
 }
-
 menuClose.onclick = () => { actionMenu.style.display = "none"; actionTarget = null; };
 
-menuToggleLeader.onclick = async () => {
-  if (!actionTarget) return;
-  const leaderRef = ref(db, `rooms/${actionTarget.roomId}/leader`);
-  const snap = await get(leaderRef);
-  const currentLeader = snap.exists() ? snap.val() : null;
-  if (currentLeader === actionTarget.name) await set(leaderRef, null);
-  else await set(leaderRef, actionTarget.name);
+/* Vote for leader (writes my vote under matches/default/votes/{roomId}/{myUid}) */
+menuVote.onclick = async () => {
+  if (!uid || !actionTarget) return;
+  await set(ref(db, `matches/default/votes/${actionTarget.roomId}/${uid}`), actionTarget.uid);
   actionMenu.style.display = "none";
+  alert(`You voted for ${actionTarget.name} as leader in ${actionTarget.roomId}.`);
 };
 
+/* Private message modal */
 menuPrivateMsg.onclick = () => {
   if (!actionTarget) return;
   openModal(`Private message to ${actionTarget.name}`, createMessageForm(), async () => {
     const text = document.getElementById("modalInput").value.trim();
-    if (text) await sendPrivateMessage(actionTarget.name, text);
+    if (text) {
+      const msgRef = push(ref(db, `inboxes/${actionTarget.uid}/messages`));
+      await set(msgRef, { fromUid: uid, fromName: displayName, text, ts: Date.now(), roomMessage: false });
+    }
   });
   actionMenu.style.display = "none";
 };
 
+/* Private reveal color */
 menuRevealColor.onclick = () => {
   if (!actionTarget) return;
   openModal(`Reveal color to ${actionTarget.name}`, createRevealForm("color"), async () => {
     const color = document.getElementById("modalSelect").value;
-    await revealToTarget(actionTarget.name, { role: color });
+    await set(ref(db, `privateReveals/${actionTarget.uid}/${uid}`), { role: color, revealedAt: Date.now() });
   });
   actionMenu.style.display = "none";
 };
 
+/* Private reveal role */
 menuRevealRole.onclick = () => {
   if (!actionTarget) return;
   openModal(`Reveal role to ${actionTarget.name}`, createRevealForm("role"), async () => {
     const role = document.getElementById("modalSelect").value;
-    await revealToTarget(actionTarget.name, { role });
+    await set(ref(db, `privateReveals/${actionTarget.uid}/${uid}`), { role, revealedAt: Date.now() });
   });
   actionMenu.style.display = "none";
 };
 
+/* Mark/unmark hostage target (writes to room node) */
 menuMarkHostage.onclick = async () => {
   if (!actionTarget) return;
-  const roomId = actionTarget.roomId;
-  const currentTargetSnap = await get(ref(db, `rooms/${roomId}/hostageTarget`));
-  const currentTarget = currentTargetSnap.exists() ? currentTargetSnap.val() : null;
-  if (currentTarget === actionTarget.name) {
-    await set(ref(db, `rooms/${roomId}/hostageTarget`), null);
-    alert(`${actionTarget.name} unmarked as hostage target.`);
+  const roomKey = actionTarget.roomId;
+  const current = (await get(ref(db, `matches/default/rooms/${roomKey}/hostageTargetUid`))).val();
+  if (current === actionTarget.uid) {
+    await set(ref(db, `matches/default/rooms/${roomKey}/hostageTargetUid`), null);
+    alert(`${actionTarget.name} unmarked as hostage.`);
   } else {
-    await set(ref(db, `rooms/${roomId}/hostageTarget`), actionTarget.name);
-    alert(`${actionTarget.name} marked as hostage target.`);
+    await set(ref(db, `matches/default/rooms/${roomKey}/hostageTargetUid`), actionTarget.uid);
+    alert(`${actionTarget.name} marked as hostage.`);
   }
   actionMenu.style.display = "none";
 };
@@ -275,227 +291,229 @@ menuMarkHostage.onclick = async () => {
 /* ---------------------------
    Modal helpers
    --------------------------- */
-function openModal(title, bodyHtml, onConfirm) {
+function openModal(title, bodyEl, onConfirm) {
   modalTitle.textContent = title;
   modalBody.innerHTML = "";
-  if (typeof bodyHtml === "string") modalBody.innerHTML = bodyHtml;
-  else modalBody.appendChild(bodyHtml);
+  modalBody.appendChild(bodyEl);
   modalOverlay.style.display = "flex";
-
   modalCancel.onclick = () => { modalOverlay.style.display = "none"; };
-  modalConfirm.onclick = async () => {
-    await onConfirm();
-    modalOverlay.style.display = "none";
-  };
+  modalConfirm.onclick = async () => { await onConfirm(); modalOverlay.style.display = "none"; };
 }
-
 function createMessageForm() {
   const wrapper = document.createElement("div");
-  const input = document.createElement("textarea");
-  input.id = "modalInput";
-  input.rows = 4;
-  input.placeholder = "Type your private message...";
-  wrapper.appendChild(input);
+  const ta = document.createElement("textarea");
+  ta.id = "modalInput"; ta.rows = 4; ta.placeholder = "Type private message...";
+  wrapper.appendChild(ta);
   return wrapper;
 }
-
 function createRevealForm(type) {
   const wrapper = document.createElement("div");
-  const select = document.createElement("select");
-  select.id = "modalSelect";
+  const select = document.createElement("select"); select.id = "modalSelect";
   if (type === "color") {
-    const o1 = document.createElement("option"); o1.value = "Red"; o1.textContent = "Red";
-    const o2 = document.createElement("option"); o2.value = "Blue"; o2.textContent = "Blue";
-    select.appendChild(o1); select.appendChild(o2);
+    const o1 = new Option("Red","Red"); const o2 = new Option("Blue","Blue");
+    select.add(o1); select.add(o2);
   } else {
-    const o1 = document.createElement("option"); o1.value = "President"; o1.textContent = "President";
-    const o2 = document.createElement("option"); o2.value = "Bomber"; o2.textContent = "Bomber";
-    select.appendChild(o1); select.appendChild(o2);
+    const o1 = new Option("President","President"); const o2 = new Option("Bomber","Bomber");
+    select.add(o1); select.add(o2);
   }
   wrapper.appendChild(select);
   return wrapper;
 }
 
 /* ---------------------------
-   Leader labels
+   Inbox & private reveals listeners
+   - inbox: matches default inboxes/inboxes/{uid}/messages
+   - private reveals: privateReveals/{myUid} (only I can read)
    --------------------------- */
-function renderLeaderLabels() {
-  onValue(ref(db, "rooms/roomA/leader"), snap => {
-    const leader = snap.val();
-    leaderAEl.textContent = `Leader: ${leader || "(none)"}`;
-  });
-  onValue(ref(db, "rooms/roomB/leader"), snap => {
-    const leader = snap.val();
-    leaderBEl.textContent = `Leader: ${leader || "(none)"}`;
-  });
-}
-
-/* ---------------------------
-   Inbox listener (my personal inbox)
-   --------------------------- */
-function attachInboxListener(viewerName) {
-  if (!viewerName) return;
-  const inboxRef = ref(db, `inboxes/${viewerName}/messages`);
-  onValue(inboxRef, snapshot => {
-    const msgs = snapshot.val() || {};
+function attachInboxListener(myUid) {
+  onValue(ref(db, `inboxes/${myUid}/messages`), snap => {
+    const msgs = snap.val() || {};
     const arr = Object.keys(msgs).map(k => ({ id: k, ...msgs[k] }));
-    arr.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-
+    arr.sort((a,b) => (a.ts||0)-(b.ts||0));
     messagesEl.innerHTML = "";
     for (const m of arr) {
       const p = document.createElement("p");
-      if (m.roomMessage) {
-        p.innerHTML = `<strong>[Room ${m.room}] ${m.from}:</strong> ${m.text}`;
-      } else {
-        p.innerHTML = `<em>Private from ${m.from}:</em> ${m.text}`;
-      }
+      if (m.roomMessage) p.innerHTML = `<strong>[Room ${m.room}] ${m.fromName || m.fromUid}:</strong> ${m.text}`;
+      else p.innerHTML = `<em>Private from ${m.fromName || m.fromUid}:</em> ${m.text}`;
       messagesEl.appendChild(p);
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
   });
 }
 
-/* ---------------------------
-   Private reveals listener for me
-   --------------------------- */
-function attachPrivateRevealsListener(viewerName) {
-  if (!viewerName) return;
-  onValue(ref(db, `privateReveals/${viewerName}`), snap => {
+function attachPrivateRevealsListener(myUid) {
+  onValue(ref(db, `privateReveals/${myUid}`), snap => {
     privateRevealsForMe = snap.val() || {};
-    renderRoom("roomA", "playersA");
-    renderRoom("roomB", "playersB");
+    // re-render rooms so reveals show up
+    renderRoom("roomA", playersA, "roomA");
+    renderRoom("roomB", playersB, "roomB");
   });
 }
 
 /* ---------------------------
-   Hostage exchange (leader only)
+   Room chat: deliver message to each player's inbox in the room
    --------------------------- */
-exchangeBtn.onclick = async () => {
-  if (!playerName) return;
-  if (!inExchangeWindow) {
-    alert("Hostage exchange only allowed during the exchange window (last 20 seconds).");
-    return;
-  }
+sendBtn.onclick = sendRoomMessage;
+chatInput.addEventListener("keypress", e => { if (e.key === "Enter") sendRoomMessage(); });
 
-  const leaderSnap = await get(ref(db, `rooms/${currentRoom}/leader`));
-  const leader = leaderSnap.exists() ? leaderSnap.val() : null;
-  if (leader !== playerName) {
-    alert("Only the leader can perform the hostage exchange.");
-    return;
-  }
+async function sendRoomMessage() {
+  if (!isJoined) { alert("Join first"); return; }
+  const text = chatInput.value.trim(); if (!text) return;
+  const playersSnap = await get(ref(db, `matches/default/rooms/${currentRoom}/players`));
+  const players = playersSnap.exists() ? Object.keys(playersSnap.val()) : [];
+  const ts = Date.now();
+  const promises = players.map(targetUid => {
+    const msgRef = push(ref(db, `inboxes/${targetUid}/messages`));
+    return set(msgRef, { fromUid: uid, fromName: displayName, text, ts, roomMessage: true, room: currentRoom });
+  });
+  await Promise.all(promises);
+  chatInput.value = "";
+}
 
-  const targetSnap = await get(ref(db, `rooms/${currentRoom}/hostageTarget`));
-  let target = targetSnap.exists() ? targetSnap.val() : null;
-  if (!target) {
-    const playersSnap = await get(ref(db, `rooms/${currentRoom}/players`));
-    const players = playersSnap.exists() ? Object.keys(playersSnap.val()) : [];
-    const choice = prompt(`No hostage target set. Enter player name to move (or leave blank to move yourself):\n${players.join(", ")}`);
-    if (choice && players.includes(choice)) target = choice;
-    else target = playerName;
-  }
-
-  const newRoom = currentRoom === "roomA" ? "roomB" : "roomA";
-  const playerInfoSnap = await get(ref(db, `rooms/${currentRoom}/players/${target}`));
-  const info = playerInfoSnap.exists() ? playerInfoSnap.val() : { role: "Unknown", revealed: false };
-
-  await set(ref(db, `rooms/${newRoom}/players/${target}`), info);
-  await remove(ref(db, `rooms/${currentRoom}/players/${target}`));
-  await set(ref(db, `rooms/${currentRoom}/hostageTarget`), null);
-  await set(ref(db, `rooms/${currentRoom}/leader`), null);
-
-  if (target === playerName) currentRoom = newRoom;
-  alert(`${target} moved to ${newRoom}.`);
+/* ---------------------------
+   Seed roles (callable function)
+   - assumes a Cloud Function 'seedRoles' is deployed
+   --------------------------- */
+seedRolesBtn.onclick = async () => {
+  if (!uid) { alert("Sign in first"); return; }
+  const seed = httpsCallable(functions, 'seedRoles');
+  try {
+    await seed({ matchId: 'default' });
+    alert("Roles seeded (server-side).");
+  } catch (e) { alert("Seed failed: " + e.message); }
 };
 
 /* ---------------------------
-   DB-authoritative round state
-   - stored at /meta/round: { timeLeft, phase, running, startedBy }
-   - any client can start; the client that starts becomes the authoritative writer
+   Tally votes (callable function or client-side)
+   - prefer server-side function 'tallyVotes' if deployed
+   --------------------------- */
+tallyVotesBtn.onclick = async () => {
+  const tally = httpsCallable(functions, 'tallyVotes');
+  try {
+    await tally({ matchId: 'default' });
+    alert("Votes tallied (server-side).");
+  } catch (e) {
+    // fallback: client-side tally
+    await clientTallyVotes();
+  }
+};
+
+async function clientTallyVotes() {
+  const rooms = ['roomA','roomB'];
+  for (const r of rooms) {
+    const votesSnap = await get(ref(db, `matches/default/votes/${r}`));
+    const votes = votesSnap.exists() ? votesSnap.val() : {};
+    const counts = {};
+    Object.values(votes).forEach(v => counts[v] = (counts[v]||0)+1);
+    let winner = null; let max = -1;
+    for (const [candidate, c] of Object.entries(counts)) if (c > max) { max = c; winner = candidate; }
+    await set(ref(db, `matches/default/rooms/${r}/leaderUid`), winner || null);
+  }
+  alert("Client-side tally complete.");
+}
+
+/* ---------------------------
+   Exchange (callable function preferred)
+   - requestExchange Cloud Function should verify leader and exchange window
+   - fallback: client attempts to perform exchange if leader
+   --------------------------- */
+exchangeBtn.onclick = async () => {
+  if (!uid) { alert("Sign in first"); return; }
+  const req = httpsCallable(functions, 'requestExchange');
+  try {
+    await req({ matchId: 'default', roomId: currentRoom });
+    alert("Exchange executed (server-side).");
+  } catch (e) {
+    // fallback: client-side attempt (leader only)
+    await clientExecuteExchange();
+  }
+};
+
+async function clientExecuteExchange() {
+  const leaderSnap = await get(ref(db, `matches/default/rooms/${currentRoom}/leaderUid`));
+  const leaderUid = leaderSnap.exists() ? leaderSnap.val() : null;
+  if (leaderUid !== uid) { alert("Only leader can execute exchange."); return; }
+  const targetSnap = await get(ref(db, `matches/default/rooms/${currentRoom}/hostageTargetUid`));
+  let targetUid = targetSnap.exists() ? targetSnap.val() : null;
+  if (!targetUid) {
+    const playersSnap = await get(ref(db, `matches/default/rooms/${currentRoom}/players`));
+    const players = playersSnap.exists() ? Object.keys(playersSnap.val()) : [];
+    const choice = prompt(`No hostage target set. Enter player UID to move (or leave blank to move yourself):\n${players.join(", ")}`);
+    if (choice && players.includes(choice)) targetUid = choice;
+    else targetUid = uid;
+  }
+  const newRoom = currentRoom === "roomA" ? "roomB" : "roomA";
+  const infoSnap = await get(ref(db, `matches/default/rooms/${currentRoom}/players/${targetUid}`));
+  const info = infoSnap.exists() ? infoSnap.val() : { displayName: "Unknown" };
+  await set(ref(db, `matches/default/rooms/${newRoom}/players/${targetUid}`), info);
+  await remove(ref(db, `matches/default/rooms/${currentRoom}/players/${targetUid}`));
+  await set(ref(db, `matches/default/rooms/${currentRoom}/hostageTargetUid`), null);
+  await set(ref(db, `matches/default/rooms/${currentRoom}/leaderUid`), null);
+  if (targetUid === uid) currentRoom = newRoom;
+  alert(`Moved ${targetUid} to ${newRoom}.`);
+}
+
+/* ---------------------------
+   Round state (DB-authoritative)
+   - stored at matches/default/round
+   - startRound writes hostUid and running=true; host writes ticks
    --------------------------- */
 startRoundBtn.onclick = async () => {
-  if (!playerName) { alert("Join first"); return; }
-  // Attempt to start round only if not already running
-  const roundRef = ref(db, `meta/round`);
-  const snap = await get(roundRef);
-  const current = snap.exists() ? snap.val() : null;
-  if (current && current.running) {
-    alert("Round already running.");
-    return;
-  }
-  // Initialize round state and become authoritative writer
-  await set(roundRef, { timeLeft: 180, phase: "discussion", running: true, startedBy: playerName });
-  startAuthoritativeTimer(roundRef, playerName);
+  if (!uid) { alert("Sign in first"); return; }
+  // attempt to become host and start
+  await set(ref(db, `matches/default/round`), { timeLeft: 180, phase: "discussion", running: true, hostUid: uid, lastTick: Date.now() });
+  startAuthoritativeTicker();
 };
 
 stopRoundBtn.onclick = async () => {
-  const roundRef = ref(db, `meta/round`);
-  await set(roundRef, { timeLeft: 0, phase: "stopped", running: false, startedBy: null });
-  // If this client was writing, stop local interval
-  if (roundTimerInterval) { clearInterval(roundTimerInterval); roundTimerInterval = null; }
+  await set(ref(db, `matches/default/round`), { timeLeft: 0, phase: "stopped", running: false, hostUid: null, lastTick: Date.now() });
+  stopAuthoritativeTicker();
 };
 
-/* Listen to round state and update UI */
 function attachRoundListener() {
-  onValue(ref(db, `meta/round`), snap => {
-    const r = snap.val();
-    if (!r) {
-      timerEl.textContent = "180";
-      phaseEl.textContent = "Phase: Discussion";
-      inExchangeWindow = false;
-      return;
-    }
+  onValue(ref(db, `matches/default/round`), snap => {
+    const r = snap.val() || { timeLeft: 180, phase: "idle", running: false, hostUid: null };
     timerEl.textContent = r.timeLeft ?? 180;
-    phaseEl.textContent = `Phase: ${r.phase ?? "Discussion"}`;
-    inExchangeWindow = (r.timeLeft <= 20 && r.running);
-    // If this client is the authoritative writer, ensure we have an interval running
-    if (r.running && r.startedBy === playerName && !roundTimerInterval) {
-      startAuthoritativeTimer(ref(db, `meta/round`), playerName);
-    }
+    phaseEl.textContent = `Phase: ${r.phase ?? "idle"}`;
+    roundHostEl.textContent = `Host: ${r.hostUid ? r.hostUid.slice(0,6) : "(none)"}`;
   });
 }
 
-/* If this client starts the round, it becomes the authoritative writer and updates DB every second */
-function startAuthoritativeTimer(roundRef, starterName) {
-  // Clear any existing interval
-  if (roundTimerInterval) clearInterval(roundTimerInterval);
-  roundTimerInterval = setInterval(async () => {
+function startAuthoritativeTicker() {
+  if (roundLocalInterval) clearInterval(roundLocalInterval);
+  roundLocalInterval = setInterval(async () => {
+    const roundRef = ref(db, `matches/default/round`);
     const snap = await get(roundRef);
-    const r = snap.exists() ? snap.val() : null;
-    if (!r || !r.running) {
-      clearInterval(roundTimerInterval);
-      roundTimerInterval = null;
-      return;
-    }
+    const r = snap.val() || {};
+    if (!r.running) { clearInterval(roundLocalInterval); roundLocalInterval = null; return; }
+    // only host should write; ensure hostUid matches me
+    if (r.hostUid !== uid) { clearInterval(roundLocalInterval); roundLocalInterval = null; return; }
     let timeLeft = (r.timeLeft ?? 180) - 1;
-    let phase = "discussion";
+    let phase = timeLeft <= 20 ? "exchange" : "discussion";
     if (timeLeft <= 0) {
-      timeLeft = 180;
-      phase = "discussion";
-      // stop running for a fresh start (or you can auto-loop)
-      await set(roundRef, { timeLeft, phase, running: false, startedBy: null });
-      clearInterval(roundTimerInterval);
-      roundTimerInterval = null;
+      // end round
+      await set(roundRef, { timeLeft: 0, phase: "ended", running: false, hostUid: null, lastTick: Date.now() });
+      clearInterval(roundLocalInterval); roundLocalInterval = null;
       return;
-    } else if (timeLeft <= 20) {
-      phase = "exchange";
-    } else {
-      phase = "discussion";
     }
-    await set(roundRef, { timeLeft, phase, running: true, startedBy: starterName });
+    await set(roundRef, { timeLeft, phase, running: true, hostUid: uid, lastTick: Date.now() });
   }, 1000);
 }
 
-/* ---------------------------
-   Listen for round state on load
-   --------------------------- */
-attachRoundListener();
+function stopAuthoritativeTicker() {
+  if (roundLocalInterval) { clearInterval(roundLocalInterval); roundLocalInterval = null; }
+}
 
 /* ---------------------------
-   When a player joins, attach inbox and reveals listeners
+   Private reveals listener for me
    --------------------------- */
-function attachInboxListenerAndReveals(viewerName) {
-  attachInboxListener(viewerName);
-  attachPrivateRevealsListener(viewerName);
+function attachPrivateRevealsListener(myUid) {
+  onValue(ref(db, `privateReveals/${myUid}`), snap => {
+    privateRevealsForMe = snap.val() || {};
+    // re-render rooms so reveals show
+    renderRoom("roomA", playersA, "roomA");
+    renderRoom("roomB", playersB, "roomB");
+  });
 }
 
 /* ---------------------------
@@ -507,8 +525,21 @@ async function safeGet(path) {
 }
 
 /* ---------------------------
-   Start rendering when page loads (rooms will update when players join)
+   Initial render calls (rooms will update when players join)
    --------------------------- */
-renderRoom("roomA", "playersA");
-renderRoom("roomB", "playersB");
+renderRoom("roomA", playersA, "roomA");
+renderRoom("roomB", playersB, "roomB");
 renderLeaderLabels();
+attachRoundListener();
+
+/* ---------------------------
+   When user signs in, set displayName variable from auth or meta
+   --------------------------- */
+onAuthStateChanged(auth, async user => {
+  if (!user) return;
+  // try to read playersMeta if exists
+  const meta = await safeGet(`playersMeta/${user.uid}`);
+  displayName = meta && meta.displayName ? meta.displayName : (user.displayName || `Player-${user.uid.slice(0,6)}`);
+  // update UI label
+  document.getElementById("userLabel").textContent = `${displayName} (${user.uid.slice(0,6)})`;
+});
