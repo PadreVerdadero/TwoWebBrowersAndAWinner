@@ -8,6 +8,12 @@
 <body>
   <h1>Two Rooms and a Boom</h1>
 
+  <!-- Name selection -->
+  <div id="nameSelect">
+    <input type="text" id="playerNameInput" placeholder="Enter your name">
+    <button onclick="joinGame()">Join Game</button>
+  </div>
+
   <div class="rooms">
     <div class="room" id="roomA">
       <h2>Room A</h2>
@@ -29,9 +35,10 @@
     <button onclick="revealRole()">Reveal Role</button>
     <button onclick="voteLeader()">Vote Leader</button>
     <button onclick="unpromoteLeader()">Unpromote Leader</button>
+    <button onclick="exchangeHostage()">Exchange Hostage</button>
   </div>
 
-  <!-- Firebase SDKs -->
+  <!-- Firebase SDK -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
