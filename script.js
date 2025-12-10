@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import { getDatabase, ref, set, push, onValue } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
 
-// Your Firebase config
+// Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyB7fXtog_41paX_ucqFadY4_qaDkBOFdP8",
   authDomain: "twowebbrowsers.firebaseapp.com",
@@ -16,16 +16,20 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- Demo player setup ---
-const playerName = "Player" + Math.floor(Math.random() * 1000);
-const currentRoom = "roomA"; // default for demo
+let playerName = null;
+let currentRoom = "roomA"; // default
 
-// Add player to database
-set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
-  role: "Unknown",
-  revealed: false,
-  leader: false
-});
+// --- Join Game ---
+function joinGame() {
+  playerName = document.getElementById("playerNameInput").value || "Player" + Math.floor(Math.random() * 1000);
+  set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
+    role: "Unknown",
+    revealed: false,
+    leader: false
+  });
+  document.getElementById("nameSelect").style.display = "none";
+}
+window.joinGame = joinGame;
 
 // --- Chat ---
 function sendMessage() {
@@ -37,17 +41,30 @@ function sendMessage() {
 }
 window.sendMessage = sendMessage;
 
+// Enter key sends message
+document.getElementById("chatInput").addEventListener("keypress", function(e) {
+  if (e.key === "Enter") sendMessage();
+});
+
 // --- Reveal Color ---
 function revealColor() {
-  set(ref(db, `rooms/${currentRoom}/players/${playerName}/revealed`), true);
-  set(ref(db, `rooms/${currentRoom}/players/${playerName}/role`), "Red/Blue");
+  const color = Math.random() > 0.5 ? "Red" : "Blue";
+  set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
+    role: color,
+    revealed: true,
+    leader: false
+  });
 }
 window.revealColor = revealColor;
 
 // --- Reveal Role ---
 function revealRole() {
-  set(ref(db, `rooms/${currentRoom}/players/${playerName}/revealed`), true);
-  set(ref(db, `rooms/${currentRoom}/players/${playerName}/role`), "Bomber/President");
+  const role = Math.random() > 0.5 ? "President" : "Bomber";
+  set(ref(db, `rooms/${currentRoom}/players/${playerName}`), {
+    role: role,
+    revealed: true,
+    leader: false
+  });
 }
 window.revealRole = revealRole;
 
@@ -62,17 +79,41 @@ function unpromoteLeader() {
 }
 window.unpromoteLeader = unpromoteLeader;
 
+// --- Hostage Exchange ---
+function exchangeHostage() {
+  // Move current player to opposite room
+  const newRoom = currentRoom === "roomA" ? "roomB" : "roomA";
+  set(ref(db, `rooms/${newRoom}/players/${playerName}`), {
+    role: "Unknown",
+    revealed: false,
+    leader: false
+  });
+  set(ref(db, `rooms/${currentRoom}/players/${playerName}`), null);
+  currentRoom = newRoom;
+}
+window.exchangeHostage = exchangeHostage;
+
 // --- Sync UI ---
-onValue(ref(db, `rooms/${currentRoom}/players`), snapshot => {
-  const players = snapshot.val() || {};
-  const container = document.getElementById("playersA");
-  container.innerHTML = "";
-  for (let p in players) {
-    let leaderBadge = players[p].leader ? "👑" : "";
-    let revealBadge = players[p].revealed ? `(${players[p].role})` : "";
-    container.innerHTML += `<div class="player">${p} ${leaderBadge} ${revealBadge}</div>`;
-  }
-});
+function renderPlayers(roomId, containerId) {
+  onValue(ref(db, `rooms/${roomId}/players`), snapshot => {
+    const players = snapshot.val() || {};
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+    for (let p in players) {
+      let emoji = "";
+      if (players[p].revealed) {
+        if (players[p].role === "President") emoji = "👑";
+        else if (players[p].role === "Bomber") emoji = "💣";
+        else if (players[p].role === "Red") emoji = "🔴";
+        else if (players[p].role === "Blue") emoji = "🔵";
+      }
+      container.innerHTML += `<div class="player">${p} ${emoji}</div>`;
+    }
+  });
+}
+
+renderPlayers("roomA", "playersA");
+renderPlayers("roomB", "playersB");
 
 onValue(ref(db, `rooms/${currentRoom}/chat`), snapshot => {
   const messages = snapshot.val() || {};
