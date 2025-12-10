@@ -12,87 +12,38 @@
 
 *{box-sizing:border-box}
 body{
-  margin:0;
-  padding:20px;
-  font-family:Inter,Arial,Helvetica,sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  text-align:center;
+  margin:0;padding:18px;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)
 }
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.auth-area button{margin-left:8px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
+main{display:flex;flex-direction:column;gap:16px}
+.lobby{max-width:1200px;margin:0 auto}
+.name-select{margin-bottom:12px}
+.name-select input{padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text)}
+.name-select button{padding:8px 10px;margin-left:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
 
-h1{margin:0 0 12px 0}
-
-.name-select{margin:12px auto}
-.name-select input{
-  padding:8px 10px;border-radius:6px;border:1px solid var(--border);
-  background:var(--panel);color:var(--text);width:220px
-}
-.name-select button{
-  padding:8px 10px;margin-left:8px;border-radius:6px;border:1px solid var(--border);
-  background:var(--card);color:var(--text);cursor:pointer
-}
-
-.rooms{display:flex;gap:16px;justify-content:space-around;margin:18px auto;max-width:1100px}
+.rooms{display:flex;gap:16px;justify-content:space-between}
 .room{width:48%;border:2px solid var(--border);border-radius:8px;padding:10px;background:var(--panel)}
 .room-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:8px}
-.leader-label{color:var(--accent);font-size:0.95rem}
-
 .players{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
-
-.player{
-  padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);cursor:pointer;color:var(--text);
-  transition:transform .08s ease,border-color .12s ease;
-  user-select:none;
-}
+.player{padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);cursor:pointer;color:var(--text);user-select:none;transition:transform .08s ease,border-color .12s}
 .player:hover{transform:translateY(-2px);border-color:var(--accent)}
 .player.red{background:var(--red);color:#fff}
 .player.blue{background:var(--blue);color:#fff}
 .player.leader{border:2px solid var(--gold)}
 
-.panel{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;max-width:1100px;margin:20px auto}
-.chat,.actions,.round{border:2px solid var(--border);border-radius:8px;padding:10px;background:var(--panel)}
-#messages{height:180px;overflow:auto;border:1px solid var(--border);padding:8px;background:var(--card);text-align:left}
-.chat-controls{margin-top:8px;display:flex;gap:8px}
-#chatInput{flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text)}
-#sendBtn{padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
+.controls{display:flex;gap:16px;max-width:1200px;margin:0 auto}
+.panel{flex:1;border:2px solid var(--border);border-radius:8px;padding:10px;background:var(--panel)}
+.messages{height:220px;overflow:auto;border:1px solid var(--border);padding:8px;background:var(--card);text-align:left}
+.chat-controls{display:flex;gap:8px;margin-top:8px}
+.chat-controls input{flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text)}
+.chat-controls button{padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
 
-.actions .action-row{margin-top:8px}
-.actions button{padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
-.note{font-size:0.9rem;color:var(--accent);margin-top:8px}
+.action-menu{position:fixed;z-index:1000;background:var(--panel);border:1px solid var(--border);padding:8px;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
+.action-menu button{display:block;width:100%;margin:6px 0;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer}
 
-.round h3{margin:6px 0}
-.tip{font-size:0.9rem;color:var(--accent);margin-top:6px}
-
-/* Action menu */
-.action-menu{
-  position:fixed;
-  z-index:1000;
-  background:var(--panel);
-  border:1px solid var(--border);
-  padding:8px;
-  border-radius:6px;
-  box-shadow:0 6px 18px rgba(0,0,0,0.6);
-}
-.action-menu button{
-  display:block;
-  width:100%;
-  margin:6px 0;
-  padding:6px 8px;
-  border-radius:6px;
-  border:1px solid var(--border);
-  background:var(--card);
-  color:var(--text);
-  cursor:pointer;
-}
-
-/* Modal */
-.modal-overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1100;
-}
-.modal{
-  width:360px;background:var(--panel);border:1px solid var(--border);padding:12px;border-radius:8px;color:var(--text);
-}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1100}
+.modal{width:360px;background:var(--panel);border:1px solid var(--border);padding:12px;border-radius:8px;color:var(--text)}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
-.modal input, .modal textarea, .modal select{
-  width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)
-}
+.modal input, .modal textarea, .modal select{width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)}
+.note{font-size:0.9rem;color:var(--accent);margin-top:8px}
