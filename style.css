@@ -1,61 +1,183 @@
+:root {
+  --bg: #121212;
+  --panel: #1e1e1e;
+  --card: #2a2a2a;
+  --text: #f1f1f1;
+  --border: #444;
+  --accent: #888;
+  --gold: #d4af37;
+  --red: #b71c1c;
+  --blue: #0d47a1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   font-family: Arial, sans-serif;
   text-align: center;
-  background: #121212;
-  color: #f1f1f1;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 20px;
+}
+
+h1 {
+  margin: 0 0 16px 0;
+  font-weight: 700;
+}
+
+.name-select {
+  margin: 10px auto 20px auto;
+}
+
+.name-select input {
+  padding: 8px 10px;
+  width: 240px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.name-select button {
+  padding: 8px 12px;
+  margin-left: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .rooms {
   display: flex;
   justify-content: space-around;
-  margin: 20px;
+  gap: 16px;
+  margin: 20px auto;
+  max-width: 1100px;
 }
 
 .room {
-  width: 40%;
-  border: 2px solid #444;
+  width: 48%;
+  border: 2px solid var(--border);
   border-radius: 8px;
   padding: 10px;
-  background: #1e1e1e;
+  background: var(--panel);
+}
+
+.room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.leader-label {
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+.players {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
 }
 
 .player {
   padding: 10px;
-  margin: 5px;
-  border: 1px solid #666;
-  border-radius: 5px;
-  background: #2a2a2a;
-  color: #f1f1f1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
   cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+
+.player:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
 }
 
 .player.red {
-  background: #b71c1c;
+  background: var(--red);
 }
 
 .player.blue {
-  background: #0d47a1;
+  background: var(--blue);
 }
 
-.leader {
-  border: 2px solid gold;
+.player.leader {
+  border: 2px solid var(--gold);
 }
 
-.chat {
-  margin-top: 20px;
-  border-top: 2px solid #444;
-  padding-top: 10px;
+.panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  max-width: 1100px;
+  margin: 20px auto;
+}
+
+.chat, .actions, .round {
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel);
 }
 
 #messages {
-  height: 150px;
+  height: 160px;
   overflow-y: auto;
-  border: 1px solid #444;
-  margin-bottom: 10px;
-  padding: 5px;
-  background: #1e1e1e;
+  border: 1px solid var(--border);
+  padding: 6px;
+  background: var(--card);
+  text-align: left;
 }
 
-.timer {
-  margin-top: 20px;
+#chatInput {
+  margin-top: 10px;
+  padding: 8px 10px;
+  width: calc(100% - 100px);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+#sendBtn {
+  padding: 8px 12px;
+  margin-left: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.actions .action-row {
+  margin-top: 10px;
+}
+
+.actions button, .round button {
+  padding: 8px 12px;
+  margin: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.round h3 {
+  margin: 6px 0;
+}
+
+.tip {
+  font-size: 0.9rem;
+  color: var(--accent);
 }
