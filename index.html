@@ -1,41 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <title>Two Rooms and a Boom (Web)</title>
-  <style>
-    .room { 
-      width: 45%; 
-      border: 1px solid #ccc; 
-      display: inline-block; 
-      vertical-align: top; 
-      padding: 10px; 
-    }
-    .player { 
-      padding: 5px; 
-      margin: 5px; 
-      border: 1px solid #999; 
-      border-radius: 5px; 
-    }
-    .leader { 
-      font-weight: bold; 
-      color: gold; 
-    }
-    .chat { 
-      margin-top: 20px; 
-    }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="room" id="roomA">
-    <h2>Room A</h2>
-    <div class="player">Alice</div>
-    <div class="player">Bob</div>
-  </div>
+  <h1>Two Rooms and a Boom</h1>
 
-  <div class="room" id="roomB">
-    <h2>Room B</h2>
-    <div class="player">Carol</div>
-    <div class="player">Dave</div>
+  <div class="rooms">
+    <div class="room" id="roomA">
+      <h2>Room A</h2>
+      <div class="players" id="playersA"></div>
+    </div>
+
+    <div class="room" id="roomB">
+      <h2>Room B</h2>
+      <div class="players" id="playersB"></div>
+    </div>
   </div>
 
   <div class="chat">
@@ -48,5 +30,8 @@
     <button onclick="voteLeader()">Vote Leader</button>
     <button onclick="unpromoteLeader()">Unpromote Leader</button>
   </div>
+
+  <!-- Firebase SDKs -->
+  <script type="module" src="script.js"></script>
 </body>
 </html>
